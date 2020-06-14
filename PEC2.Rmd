@@ -1,0 +1,318 @@
+---
+title: "PEC 2"
+author: "Laia Giralt"
+date: "28/5/2020"
+output: html_document
+---
+# 1. Abstract
+
+
+
+# 2. Introducció
+
+En aquest estudi analitzarem dades de mostres del projecte Genotip-Tissue Expression (GTEx). En aquest projecte hi ha mostres de 54 teixit de 1000 individus. en el nostre anàlisis ens centrarem en aquelles mostres de tiroides i en les dades de RNA-seq, és a dir en les dades de la seva expressió. Aquestes mostres estan dividides en tres grups:
+- Not infiltrated tissues (NIT)
+- Small focal infiltrates (SFI)
+- Extensive lymphoid infiltrates (ELI)
+
+# 3. Objectius
+- Comparar l’expressió gènica dels diferents grups de mostres de teixits de tiroides
+- Identificar gens diferencialment expressats entre els tres grups d’estudi: NIT, SFI i ELI
+- Analitzar la significació biològica dels resultats
+
+# 4. Materials i mètodes
+Aquest estudi s’ha aplicat en un dataset del projecte Genotip-Tissue Expression (GTEx) on hi havia les dades de diferents mostres de tiroides que es troben classificades en 3 grups:
+- Not infiltrated tissues (NIT)
+- Small focal infiltrates (SFI)
+- Extensive lymphoid infiltrates (ELI)
+
+Per obtenir el perfil d’expressió es la tècnica RNA-Seq. Aquesta tècnica és un perfeccionament dels Arrays, ja que permet salvar algunes limitació que presentaven com és la saturació de fluorescència. La tècnica RNA-Seq pertany a les tècniques de seqüenciació d'última generació i segueix el següent esquema:
+
+Per l’anàlisi bioinformàtic s’han seguit diversos el documents, entre ells hi ha XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX. 
+
+Els anàlisis bioinformàtics s’han realitzat amb el codi de R, amb el programari de Rstudio i algunes llibreries de Bioconductor (www.bioconductior.org). Algunes de les llibreries que hem utilitzat són:
+
+- library(oligo)
+- library(Biobase)
+- library(pd.hta.2.0)
+- library(RSQLite)
+- library(DBI)
+- library(readr)
+- library(DESeq)
+
+``````{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+library(oligo)
+library(Biobase)
+library(pd.hta.2.0)
+library(RSQLite)
+library(DBI)
+library(readr)
+library(DESeq)
+```
+
+
+El paquet DESeq que va ser creat per Simon Anders, ens serveix per fer un anàlisis de conteig en assajos de seqüenciació d’alt rendiments com serien els de RNA-Seq que ens ocupen en el nostre estudi.
+A continuació detellem els passos fets i podem trobar el repositori a XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+## 4.1 Preparació de dades
+Ens hem descarregat l’arxiu que ens han facilitat per realitzar la PEC on hi havia totes les dades de les diverses mostres. En primer lloc hem modificat aquesta taula per adequar els noms de les mostres a la codificació de ENSEMBL que necessitarem a posteriori. Per fer-ho, hem utilitzat l’eina de buscar i reemplaçar del mateix “EXCEL”. Un cop hem accedit a la eina a través del menú, he col·locat la següent cerca: .** Això vol dir que ens busqui tots els punts que hi hagi i els dos elements posteriors sense tenir en compte què són. A continuació posem que es reemplaci, d’aquesta manera borrem el punt i els números que hi ha a darrera.
+
+Un cop realitzada aquesta modificació, hem continuat el nostre procés amb RStudio, on el primer que farem és carregar la nostra base de dades.
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+celFiles = read_delim("./counts.csv",";", escape_double = FALSE, trim_ws = TRUE)
+```
+
+Després carregarem una segona taula, que també ens han subministrat, on hi ha diversa informació de les nostres mostres. Entre aquesta informació hi ha el grup en què pertany cada mostra. Per fer-ho utilitzem el següent codi:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+targets = read_delim("./targets.csv",",", escape_double = FALSE, trim_ws = TRUE)
+```
+
+
+### 4.1.1 Selecció de dades
+
+Tal i com ens demana l’investigador (l’enunciat de la PEC2), seleccionem 10 valors de cada grup. En el nostre cas el què fem és ordenar les mostres segons el grup d'anàlisis i seleccionem les 10 primeres de cada grup. Aquestes 10 mostres les guardem en una nova variable. Quan tenim les 3 noves variables (una de cada grup), les tornem a unir en una nova taula anomenada targets1. Tot això ho fem gràcies el següent codi:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+#Seleccionem els 10 primers valors de cada grup
+data1= targets[targets$Grupo_analisis==1,][1:10,]
+data2=targets[targets$Grupo_analisis==2,][1:10,]
+data3=targets[targets$Grupo_analisis==3,][1:10,]
+
+#Unim totes les taules
+targets1= rbind(data1, data2, data3)
+```
+
+Tot seguit, passarem els Grups d’anàlisis de la nova taula targets1 a factors amb el següent codi:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+targets1$Grupo_analisis <- factor(targets1$Grupo_analisis, labels=c("NIT", "SFI","ELI"))
+```
+
+En aquest punt, utilitzarem la variable Sample_Name de la taula targets1 per poder seleccionar les columnes de la taula celFiles(on hi ha les dades concretes d’expressió de les nostres mostres) que ens interessen (les 30 mostres que hem seleccionat amb passos anteriors). Per fer-ho utilitzarem el següent codi:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+noms= targets1$Sample_Name
+countTable = celFiles[ ,noms ]
+```
+
+## 4.2. Normalització
+S’ha realitzat la normalització de les dades per fer que les mostres siguin comparables entre elles. D’aquesta manera s’intenta reduir, i si es pot eliminar, tot la variabilitat que no sigui deguda a raons biològiques, com podrien ser biaxos per problemes tècnics.
+
+Com que treballarem amb el paquet DESeq, hem de començar l’anàlisi amb la funció newCountDataSet(). Per poder-la utilitzar necessitem la matriu de contejos bruts (en el nostre cas és la celFile) i una variable amb les condicions, que en el nostre cas són els diferents grups on pertanyen les mostres (NIT, SFI i ELI). Per realitzar-ho creem una nova variable on guardem els diferents grups on pertanyen les mostres. utilitzem el següent codi:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+condition = targets1$Grupo_analisis
+cds = newCountDataSet(countTable, condition )
+```
+
+A continuació, hem de calcular els factors de normalització per convertir els contejos en comparables entre els grups. Per fer això, utilitzem la funció estimateSizeFactors per crear una proporció de contejos que rep cada mostra o individu:
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+cds = estimateSizeFactors( cds )
+sizeFactors( cds )
+```
+
+Amb aquests factors de normalització i utilitzant la funció counts() amb l’atribut normalized=TRUE, podem obtenir els nostres contejos normalitzats
+
+```{r}
+head(counts( cds, normalized=TRUE ) )
+```
+
+
+
+
+
+
+
+
+
+```{r, results='hide', message= FALSE, warning=FALSE, error=FALSE}
+
+```
+
+
+
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("oligo")
+BiocManager::install("pd.hta.2.0")
+
+
+```
+
+
+```{r}
+library(oligo)
+library(Biobase)
+library(pd.hta.2.0)
+library(RSQLite)
+library(DBI)
+library(readr)
+targets = read_delim("./targets.csv",",", escape_double = FALSE, trim_ws = TRUE)
+celFiles = read_delim("./counts.csv",";", escape_double = FALSE, trim_ws = TRUE)
+
+
+```
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("SummarizedExperiment")
+```
+
+```{r}
+
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("DESeq")
+
+```
+
+Seleccionar dades
+```{r}
+library(DESeq)
+#Seleccionem els 10 primers valors de cada grup
+data1= targets[targets$Grupo_analisis==1,][1:10,]
+data2=targets[targets$Grupo_analisis==2,][1:10,]
+data3=targets[targets$Grupo_analisis==3,][1:10,]
+
+#Unim totes les taules
+targets1= rbind(data1, data2, data3)
+targets1$Grupo_analisis <- factor(targets1$Grupo_analisis, labels=c("NIT", "SFI","ELI"))
+
+noms= targets1$Sample_Name
+countTable = celFiles[ ,noms ]
+
+condition = targets1$Grupo_analisis
+
+
+```
+
+8.2 Normalització
+```{r}
+cds = newCountDataSet(countTable, condition )
+
+cds = estimateSizeFactors( cds )
+sizeFactors( cds )
+cds
+head(counts( cds, normalized=TRUE ) )
+
+
+```
+
+
+Estimació de la variança
+
+```{r}
+cds = estimateDispersions( cds )
+str( fitInfo(cds) )
+plotDispEsts( cds )
+```
+
+## Interferencia: observar la diferenciació d'expressió
+
+### Comparació entre dos condicions experimenals
+
+#### NIT-SFI
+```{r}
+res = nbinomTest( cds, "NIT", "SFI" )
+head(res)
+
+res$id=celFiles$X1
+
+head(res)
+
+hist(res$pval, breaks=100, col="skyblue", border="slateblue", main="")
+
+resSig = res[ res$pval < 0.1, ]
+head( resSig[ order(resSig$pval), ] )
+
+```
+
+#### SFI-ELI
+```{r}
+res_SFI_ELI = nbinomTest( cds, "SFI", "ELI" )
+head(res_SFI_ELI)
+
+res_SFI_ELI$id=celFiles$X1
+
+head(res_SFI_ELI)
+
+hist(res_SFI_ELI$pval, breaks=100, col="skyblue", border="slateblue", main="")
+
+resSig_SFI_ELI = res_SFI_ELI[ res$pval < 0.1, ]
+head( resSig_SFI_ELI [ order(resSig_SFI_ELI $pval), ] )
+
+```
+
+#### NIT-ELI
+```{r}
+res_NIT_ELI = nbinomTest( cds, "NIT", "ELI" )
+head(res_NIT_ELI)
+
+res_NIT_ELI$id=celFiles$X1
+
+head(res_NIT_ELI)
+
+hist(res_NIT_ELI$pval, breaks=100, col="skyblue", border="slateblue", main="")
+
+resSig_NIT_ELI = res_NIT_ELI[ res$pval < 0.1, ]
+head( resSig_NIT_ELI [ order(resSig_NIT_ELI $pval), ] )
+
+```
+
+
+
+## Anotacions
+### NIT-SFI
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("org.Hs.eg.db")
+BiocManager::install("clusterProfiler")
+BiocManager::install("pathview")
+BiocManager::install("AnnotationHub")
+BiocManager::install("ensembldb")
+BiocManager::install("tidyverse")
+
+library(org.Hs.eg.db)
+library(DOSE)
+library(pathview)
+library(clusterProfiler)
+library(AnnotationHub)
+library(ensembldb)
+library(tidyverse)
+```
+
+
+```{r}
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+
+resSig$symbol <- mapIds(org.Hs.eg.db,
+                     keys = resSig$id,
+                     column = "SYMBOL",
+                     keytype = "ENSEMBL",
+                     multiVals = "first")
+resSig$entrez <- mapIds(org.Hs.eg.db,
+                     keys = resSig$id,
+                     column = "ENTREZID",
+                     keytype = "ENSEMBL",
+                     multiVals = "first")
+
+resOrdered <- resSig[order(resSig$padj),]
+head(resOrdered)
+
+```
+
+
+8.11 Significació biològica
